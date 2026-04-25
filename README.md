@@ -1,39 +1,7 @@
-# Guzheng_Tech99
+# 古筝演奏技法逐帧检测器 WebUI
+[![license](https://img.shields.io/github/license/monetjoe/Guzheng_Tech99.svg)](./LICENSE)
+[![auto-sync](https://github.com/monetjoe/Guzheng_Tech99/actions/workflows/auto-sync.yml/badge.svg)](https://github.com/monetjoe/Guzheng_Tech99/actions/workflows/auto-sync.yml)
+[![hf](https://img.shields.io/badge/huggingface-Guzheng__Tech99-ffd21e.svg)](https://huggingface.co/spaces/ccmusic-database/Guzheng_Tech99)
+[![ms](https://img.shields.io/badge/modelscope-Guzheng__Tech99-624aff.svg)](https://modelscope.cn/studios/ccmusic-database/Guzheng_Tech99)
 
-#### 介绍
-{**以下是 Gitee 平台说明，您可以替换此简介**
-Gitee 是 OSCHINA 推出的基于 Git 的代码托管平台（同时支持 SVN）。专为开发者提供稳定、高效、安全的云端软件开发协作平台
-无论是个人、团队、或是企业，都能够用 Gitee 实现代码托管、项目管理、协作开发。企业项目请看 [https://gitee.com/enterprises](https://gitee.com/enterprises)}
-
-#### 软件架构
-软件架构说明
-
-
-#### 安装教程
-
-1.  xxxx
-2.  xxxx
-3.  xxxx
-
-#### 使用说明
-
-1.  xxxx
-2.  xxxx
-3.  xxxx
-
-#### 参与贡献
-
-1.  Fork 本仓库
-2.  新建 Feat_xxx 分支
-3.  提交代码
-4.  新建 Pull Request
-
-
-#### 特技
-
-1.  使用 Readme\_XXX.md 来支持不同的语言，例如 Readme\_en.md, Readme\_zh.md
-2.  Gitee 官方博客 [blog.gitee.com](https://blog.gitee.com)
-3.  你可以 [https://gitee.com/explore](https://gitee.com/explore) 这个地址来了解 Gitee 上的优秀开源项目
-4.  [GVP](https://gitee.com/gvp) 全称是 Gitee 最有价值开源项目，是综合评定出的优秀开源项目
-5.  Gitee 官方提供的使用手册 [https://gitee.com/help](https://gitee.com/help)
-6.  Gitee 封面人物是一档用来展示 Gitee 会员风采的栏目 [https://gitee.com/gitee-stars/](https://gitee.com/gitee-stars/)
+古筝演奏技法逐帧检测器是一种创新的技术工具，旨在通过逐帧分析古筝演奏视频来识别和评估演奏者的技法。该检测器利用先进的计算机视觉和机器学习算法，能够精确捕捉演奏者的手指动作、指法运用以及演奏姿态等细节，为学习者和教育者提供实时反馈和改进建议。它不仅有助于提高演奏技巧的准确性和规范性，还能为古筝教学和演奏水平的提升提供有力支持，是古筝爱好者和专业人士提升技艺的得力助手。
