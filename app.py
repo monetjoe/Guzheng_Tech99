@@ -19,11 +19,6 @@ from utils import (
     CLASSES,
 )
 
-I18N = gr.I18n(
-    zh={key: key for key in ZH2EN},
-    en=ZH2EN,
-)
-
 
 def logMel(y, sr=SAMPLE_RATE):
     mel = librosa.feature.melspectrogram(
@@ -155,12 +150,11 @@ def infer(audio_path: str, log_name: str):
                     break
 
                 to = (index + 1) * TIME_LENGTH / frames_per_3s
+                tech = CLASSES[torch.argmax(pred).item()]
                 outputs.append(
                     {
-                        I18N("帧数"): f"{format_second(start)} - {format_second(to)}",
-                        I18N("技法"): I18N(
-                            TRANSLATE[CLASSES[torch.argmax(pred).item()]]
-                        ),
+                        "Frame": f"{format_second(start)} - {format_second(to)}",
+                        "Tech": f"{TRANSLATE[tech]}({tech})",
                     }
                 )
                 index += 1
@@ -182,25 +176,29 @@ if __name__ == "__main__":
     for wav in example_wavs:
         examples.append([wav, models[0]])
 
+    i18n = gr.I18n(
+        zh={key: key for key in ZH2EN},
+        en=ZH2EN,
+    )
     with gr.Blocks() as demo:
         gr.Interface(
             fn=infer,
             inputs=[
-                gr.Audio(label=I18N("上传录音"), type="filepath"),
-                gr.Dropdown(choices=models, label=I18N("选择模型"), value=models[0]),
+                gr.Audio(label=i18n("上传录音"), type="filepath"),
+                gr.Dropdown(choices=models, label=i18n("选择模型"), value=models[0]),
             ],
             outputs=[
-                gr.Textbox(label=I18N("状态栏"), buttons=["copy"]),
-                gr.Textbox(label=I18N("音频文件名"), buttons=["copy"]),
-                gr.Dataframe(label=I18N("古筝演奏技法逐帧检测")),
+                gr.Textbox(label=i18n("状态栏"), buttons=["copy"]),
+                gr.Textbox(label=i18n("音频文件名"), buttons=["copy"]),
+                gr.Dataframe(label=i18n("古筝演奏技法逐帧检测")),
             ],
             examples=examples,
             cache_examples=False,
             flagging_mode="never",
-            title=I18N("建议录音时长不要过长"),
+            title=i18n("建议录音时长不要过长"),
         )
 
-        gr.Markdown(f"# {I18N('引用')}" + """
+        gr.Markdown(f"# {i18n('引用')}" + """
             ```bibtex
             @article{Zhou-2025,
                 author  = {Monan Zhou and Shenyang Xu and Zhaorui Liu and Zhaowen Wang and Feng Yu and Wei Li and Baoqiang Han},
@@ -218,7 +216,7 @@ if __name__ == "__main__":
 
     demo.launch(
         theme=gr.themes.Ocean(),
-        css="#gradio-share-link-button-0, thead { display: none; }",
+        css="#gradio-share-link-button-0, .svelte-16f20a1 thead { display: none; }",
         ssr_mode=False,
-        i18n=I18N,
+        i18n=i18n,
     )
