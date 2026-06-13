@@ -1,42 +1,82 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torchvision.models as models
-from utils import MODEL_DIR, EN_US
+import numpy as np
+from utils import EN_US
+
+
+class Interpolate(nn.Module):
+    def __init__(
+        self,
+        size=None,
+        scale_factor=None,
+        mode="bilinear",
+        align_corners=False,
+    ):
+        super(Interpolate, self).__init__()
+        self.size = size
+        self.scale_factor = scale_factor
+        self.mode = mode
+        self.align_corners = align_corners
+
+    def forward(self, x):
+        return F.interpolate(
+            x,
+            size=self.size,
+            scale_factor=self.scale_factor,
+            mode=self.mode,
+            align_corners=self.align_corners,
+        )
 
 
 class EvalNet:
-    model: nn.Module = None
-    m_type = "squeezenet"
-    input_size = 224
-    output_size = 512
+    def __init__(
+        self,
+        backbone: str,
+        cls_num: int,
+        ori_T: int,
+        imgnet_ver="v1",
+        weight_path="",
+    ):
+        if not hasattr(models, backbone):
+            raise ValueError(f"Unsupported model {backbone}.")
 
-    def __init__(self, log_name: str, cls_num: int):
-        saved_model_path = f"{MODEL_DIR}/{log_name}/save.pt"
-        m_ver = "_".join(log_name.split("_")[:-3])
-        self.m_type, self.input_size = self._model_info(m_ver)
-
-        if not hasattr(models, m_ver):
-            raise ValueError("不支持的模型")
-
-        self.model = eval("models.%s()" % m_ver)
-        linear_output = self._set_outsize()
-        self._set_classifier(cls_num, linear_output)
+        self.imgnet_ver = imgnet_ver
+        self.training = bool(weight_path == "")
+        self.type, self.weight_url, self.input_size = self._model_info(backbone)
+        self.model: torch.nn.Module = eval("models.%s()" % backbone)
+        self.ori_T = ori_T
+        self.out_channel_before_classifier = 0
+        self._set_channel_outsize()  # set out channel size
+        self.cls_num = cls_num
+        self._set_classifier()
+        self._pseudo_foward()
         checkpoint = torch.load(
-            saved_model_path,
+            weight_path,
             map_location=torch.device("cuda:0") if torch.cuda.is_available() else "cpu",
         )
-        self.model.load_state_dict(checkpoint, False)
+        if self.type == "squeezenet":
+            self.model.load_state_dict(checkpoint, False)
+
+        else:
+            self.model.load_state_dict(checkpoint["model"], False)
+            self.classifier.load_state_dict(checkpoint["classifier"], False)
+
+        if torch.cuda.is_available():
+            self.model = self.model.cuda()
+            self.classifier = self.classifier.cuda()
+
         self.model.eval()
 
-    def _get_backbone(self, ver: str, backbone_list: list):
-        for bb in backbone_list:
-            if ver == bb["ver"]:
-                return bb
+    def _get_backbone(self, backbone_ver, backbone_list):
+        for backbone_info in backbone_list:
+            if backbone_ver == backbone_info["ver"]:
+                return backbone_info
 
-        print("未找到骨干网络名称，使用默认选项 - alexnet")
-        return backbone_list[0]
+        raise ValueError("[Backbone not found] Please check if --model is correct!")
 
-    def _model_info(self, m_ver: str):
+    def _model_info(self, backbone: str):
         if EN_US:
             from datasets import load_dataset
 
@@ -47,104 +87,228 @@ class EvalNet:
 
             backbone_list = MsDataset.load("monetjoe/cv_backbones", split="train")
 
-        backbone = self._get_backbone(m_ver, backbone_list)
-        m_type = str(backbone["type"])
-        input_size = int(backbone["input_size"])
-        return m_type, input_size
+        backbone_info = self._get_backbone(backbone, backbone_list)
+        return (
+            str(backbone_info["type"]),
+            str(backbone_info["url"]),
+            int(backbone_info["input_size"]),
+        )
 
-    def _classifier(self, cls_num: int, output_size: int, linear_output: bool):
-        q = (1.0 * output_size / cls_num) ** 0.25
-        l1 = int(q * cls_num)
-        l2 = int(q * l1)
-        l3 = int(q * l2)
-        if linear_output:
-            return torch.nn.Sequential(
-                nn.Dropout(),
-                nn.Linear(output_size, l3),
-                nn.ReLU(inplace=True),
-                nn.Dropout(),
-                nn.Linear(l3, l2),
-                nn.ReLU(inplace=True),
-                nn.Dropout(),
-                nn.Linear(l2, l1),
-                nn.ReLU(inplace=True),
-                nn.Linear(l1, cls_num),
-            )
+    def _create_classifier(self):
+        original_T_size = self.ori_T
+        return nn.Sequential(
+            nn.AdaptiveAvgPool2d((1, None)),  # F -> 1
+            nn.ConvTranspose2d(
+                self.out_channel_before_classifier,
+                256,
+                kernel_size=(1, 4),
+                stride=(1, 2),
+                padding=(0, 1),
+            ),
+            nn.ReLU(inplace=True),
+            nn.BatchNorm2d(256),
+            nn.ConvTranspose2d(
+                256, 128, kernel_size=(1, 4), stride=(1, 2), padding=(0, 1)
+            ),
+            nn.ReLU(inplace=True),
+            nn.BatchNorm2d(128),
+            nn.ConvTranspose2d(
+                128, 64, kernel_size=(1, 4), stride=(1, 2), padding=(0, 1)
+            ),
+            nn.ReLU(inplace=True),
+            nn.BatchNorm2d(64),
+            nn.ConvTranspose2d(
+                64, 32, kernel_size=(1, 4), stride=(1, 2), padding=(0, 1)
+            ),
+            nn.ReLU(inplace=True),
+            nn.BatchNorm2d(32),  # input for Interp: [bsz, C, 1, T]
+            Interpolate(
+                size=(1, original_T_size), mode="bilinear", align_corners=False
+            ),  # classifier
+            nn.Conv2d(32, 32, kernel_size=(1, 1)),
+            nn.ReLU(inplace=True),
+            nn.BatchNorm2d(32),
+            nn.Conv2d(32, self.cls_num, kernel_size=(1, 1)),
+        )
 
-        else:
-            return torch.nn.Sequential(
-                nn.Dropout(),
-                nn.Conv2d(output_size, l3, kernel_size=(1, 1), stride=(1, 1)),
-                nn.ReLU(inplace=True),
-                nn.AdaptiveAvgPool2d(output_size=(1, 1)),
-                nn.Flatten(),
-                nn.Linear(l3, l2),
-                nn.ReLU(inplace=True),
-                nn.Dropout(),
-                nn.Linear(l2, l1),
-                nn.ReLU(inplace=True),
-                nn.Linear(l1, cls_num),
-            )
-
-    def _set_outsize(self):
+    def _set_channel_outsize(self):  #### get the output size before classifier ####
+        conv2d_out_ch = []
         for name, module in self.model.named_modules():
+            if isinstance(module, torch.nn.Conv2d):
+                conv2d_out_ch.append(module.out_channels)
+
             if (
                 str(name).__contains__("classifier")
                 or str(name).__eq__("fc")
                 or str(name).__contains__("head")
-                or hasattr(module, "classifier")
             ):
-                if isinstance(module, torch.nn.Linear):
-                    self.output_size = module.in_features
-                    return True
-
                 if isinstance(module, torch.nn.Conv2d):
-                    self.output_size = module.in_channels
-                    return False
+                    conv2d_out_ch.append(module.in_channels)
+                    break
 
-        return False
+        self.out_channel_before_classifier = conv2d_out_ch[-1]
 
-    def _set_classifier(self, cls_num: int, linear_output: bool):
-        if self.m_type == "convnext":
-            del self.model.classifier[2]
-            self.model.classifier = nn.Sequential(
-                *list(self.model.classifier)
-                + list(self._classifier(cls_num, self.output_size, linear_output))
+    def _set_classifier(self):  #### set custom classifier ####
+        if self.type == "resnet":
+            self.model.avgpool = nn.Identity()
+            self.model.fc = nn.Identity()
+            self.classifier = self._create_classifier()
+
+        elif (
+            self.type == "vgg" or self.type == "efficientnet" or self.type == "convnext"
+        ):
+            self.model.avgpool = nn.Identity()
+            self.model.classifier = nn.Identity()
+            self.classifier = self._create_classifier()
+
+        elif self.type == "squeezenet":
+            self.model.classifier = nn.Identity()
+            self.classifier = self._create_classifier()
+
+    def get_input_size(self):
+        return self.input_size
+
+    def _pseudo_foward(self):
+        temp = torch.randn(4, 3, self.input_size, self.input_size)
+        out = self.model(temp)
+        self.H = int(np.sqrt(out.size(1) / self.out_channel_before_classifier))
+
+    def forward(self, x):
+        if torch.cuda.is_available():
+            x = x.cuda()
+
+        if self.type == "convnext":
+            out = self.model(x)
+            return self.classifier(out).squeeze()
+
+        else:
+            out = self.model(x)
+            out = out.view(
+                out.size(0), self.out_channel_before_classifier, self.H, self.H
             )
-            return
+            return self.classifier(out).squeeze()
 
-        elif self.m_type == "maxvit":
-            del self.model.classifier[5]
-            self.model.classifier = nn.Sequential(
-                *list(self.model.classifier)
-                + list(self._classifier(cls_num, self.output_size, linear_output))
-            )
-            return
 
-        if hasattr(self.model, "classifier"):
-            self.model.classifier = self._classifier(
-                cls_num, self.output_size, linear_output
-            )
-            return
+class t_EvalNet:
+    def __init__(
+        self,
+        backbone: str,
+        cls_num: int,
+        ori_T: int,
+        imgnet_ver="v1",
+        weight_path="",
+    ):
+        if not hasattr(models, backbone):
+            raise ValueError(f"Unsupported model {backbone}.")
 
-        elif hasattr(self.model, "fc"):
-            self.model.fc = self._classifier(cls_num, self.output_size, linear_output)
-            return
+        self.imgnet_ver = imgnet_ver
+        self.type, self.weight_url, self.input_size = self._model_info(backbone)
+        self.model: torch.nn.Module = eval("models.%s()" % backbone)
+        self.ori_T = ori_T
+        if self.type == "vit":
+            self.hidden_dim = self.model.hidden_dim
+            self.class_token = nn.Parameter(torch.zeros(1, 1, self.hidden_dim))
 
-        elif hasattr(self.model, "head"):
-            self.model.head = self._classifier(cls_num, self.output_size, linear_output)
-            return
+        elif self.type == "swin_transformer":
+            self.hidden_dim = 768
 
-        self.model.heads.head = self._classifier(
-            cls_num, self.output_size, linear_output
+        self.cls_num = cls_num
+        self._set_classifier()
+        checkpoint = torch.load(
+            weight_path,
+            map_location=torch.device("cuda:0") if torch.cuda.is_available() else "cpu",
         )
+        self.model.load_state_dict(checkpoint["model"], False)
+        self.classifier.load_state_dict(checkpoint["classifier"], False)
+        if torch.cuda.is_available():
+            self.model = self.model.cuda()
+            self.classifier = self.classifier.cuda()
+
+        self.model.eval()
+
+    def _get_backbone(self, backbone_ver, backbone_list):
+        for backbone_info in backbone_list:
+            if backbone_ver == backbone_info["ver"]:
+                return backbone_info
+
+        raise ValueError("[Backbone not found] Please check if --model is correct!")
+
+    def _model_info(self, backbone: str):
+        if EN_US:
+            from datasets import load_dataset
+
+            backbone_list = load_dataset("monetjoe/cv_backbones", split="train")
+
+        else:
+            from modelscope.msdatasets import MsDataset
+
+            backbone_list = MsDataset.load("monetjoe/cv_backbones", split="v1")
+
+        backbone_info = self._get_backbone(backbone, backbone_list)
+        return (
+            str(backbone_info["type"]),
+            str(backbone_info["url"]),
+            int(backbone_info["input_size"]),
+        )
+
+    def _create_classifier(self):
+        original_T_size = self.ori_T
+        self.avgpool = nn.AdaptiveAvgPool2d((1, None))  # F -> 1
+        return nn.Sequential(  # nn.AdaptiveAvgPool2d((1, None)), # F -> 1
+            nn.ConvTranspose2d(
+                self.hidden_dim, 256, kernel_size=(1, 4), stride=(1, 2), padding=(0, 1)
+            ),
+            nn.ReLU(inplace=True),
+            nn.BatchNorm2d(256),
+            nn.ConvTranspose2d(
+                256, 128, kernel_size=(1, 4), stride=(1, 2), padding=(0, 1)
+            ),
+            nn.ReLU(inplace=True),
+            nn.BatchNorm2d(128),
+            nn.ConvTranspose2d(
+                128, 64, kernel_size=(1, 4), stride=(1, 2), padding=(0, 1)
+            ),
+            nn.ReLU(inplace=True),
+            nn.BatchNorm2d(64),
+            nn.ConvTranspose2d(
+                64, 32, kernel_size=(1, 4), stride=(1, 2), padding=(0, 1)
+            ),
+            nn.ReLU(inplace=True),
+            nn.BatchNorm2d(32),  # input for Interp: [bsz, C, 1, T]
+            Interpolate(
+                size=(1, original_T_size), mode="bilinear", align_corners=False
+            ),  # classifier
+            nn.Conv2d(32, 32, kernel_size=(1, 1)),
+            nn.ReLU(inplace=True),
+            nn.BatchNorm2d(32),
+            nn.Conv2d(32, self.cls_num, kernel_size=(1, 1)),
+        )
+
+    def _set_classifier(self):  #### set custom classifier ####
+        if self.type == "vit" or self.type == "swin_transformer":
+            self.classifier = self._create_classifier()
+
+    def get_input_size(self):
+        return self.input_size
 
     def forward(self, x: torch.Tensor):
         if torch.cuda.is_available():
             x = x.cuda()
-            self.model = self.model.cuda()
+            self.class_token = self.class_token.cuda()
 
-        if self.m_type == "googlenet":
-            return self.model(x)[0]
-        else:
-            return self.model(x)
+        if self.type == "vit":
+            x = self.model._process_input(x)
+            batch_class_token = self.class_token.expand(x.size(0), -1, -1)
+            x = torch.cat([batch_class_token, x], dim=1)
+            x = self.model.encoder(x)
+            x = x[:, 1:].permute(0, 2, 1)
+            x = x.unsqueeze(2)
+            return self.classifier(x).squeeze()
+
+        elif self.type == "swin_transformer":
+            x = self.model.features(x)  # [B, H, W, C]
+            x = x.permute(0, 3, 1, 2)
+            x = self.avgpool(x)  # [B, C, 1, W]
+            return self.classifier(x).squeeze()
+
+        return None
