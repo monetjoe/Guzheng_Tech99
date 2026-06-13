@@ -73,11 +73,11 @@ def toCUDA(x):
     return x
 
 
-def find_wav_files(folder_path=f"{MODEL_DIR}/examples"):
+def find_wav_files(folder_path=f"{MODEL_DIR}/examples", ext=".flac"):
     wav_files = []
     for root, _, files in os.walk(folder_path):
         for file in files:
-            if file.endswith(".wav"):
+            if file.endswith(ext):
                 file_path = os.path.join(root, file)
                 wav_files.append(file_path)
 
