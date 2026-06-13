@@ -158,7 +158,9 @@ def infer(audio_path: str, log_name: str):
                 outputs.append(
                     {
                         I18N("帧数"): f"{format_second(start)} - {format_second(to)}",
-                        I18N("技法"): TRANSLATE[CLASSES[torch.argmax(pred).item()]],
+                        I18N("技法"): I18N(
+                            TRANSLATE[CLASSES[torch.argmax(pred).item()]]
+                        ),
                     }
                 )
                 index += 1
