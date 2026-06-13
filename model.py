@@ -242,7 +242,7 @@ class t_EvalNet:
         else:
             from modelscope.msdatasets import MsDataset
 
-            backbone_list = MsDataset.load("monetjoe/cv_backbones", split="v1")
+            backbone_list = MsDataset.load("monetjoe/cv_backbones", split="train")
 
         backbone_info = self._get_backbone(backbone, backbone_list)
         return (
